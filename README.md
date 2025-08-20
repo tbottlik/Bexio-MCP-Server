@@ -38,15 +38,9 @@ The easiest way to get an access token is using **Personal Access Tokens (PAT)**
 - ✅ No OAuth setup required
 - ✅ Perfect for personal/development use
 
-### Alternative: OAuth Flow
+### Alternative Authentication
 
-If you need custom scopes or multi-user access, use the included OAuth helper:
-
-```bash
-python3 oauth_helper.py
-```
-
-This will guide you through setting up OAuth credentials and obtaining an access token.
+If you need custom scopes or multi-user access beyond Personal Access Tokens (PAT), implement an OAuth flow in your own application using Bexio's OAuth documentation.
 
 ### Environment Setup
 
@@ -237,7 +231,6 @@ bexio-mcp-server/
 │   ├── __init__.py          # Package initialization
 │   ├── server.py            # Main MCP server with 16 tools
 │   └── bexio_client.py      # Bexio API client with OAuth support
-├── oauth_helper.py          # OAuth token generation helper
 ├── .env.example             # Environment variables template
 ├── requirements.txt         # Python dependencies
 ├── pyproject.toml          # Project configuration
