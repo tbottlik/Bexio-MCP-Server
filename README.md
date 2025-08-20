@@ -14,12 +14,17 @@ MCP server for Bexio ERP integration - enables AI assistants to interact with Be
 ## Installation
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10+
 - Bexio account with API access
 
-### Install Dependencies
+### Install
+- For users:
 ```bash
-pip install -r requirements.txt
+pip install .
+```
+- For development (with tests and linters):
+```bash
+pip install -e ".[dev]"
 ```
 
 ## Configuration
@@ -228,13 +233,11 @@ Create a new item/article.
 ```
 bexio-mcp-server/
 ├── mcp_server_bexio/
-│   ├── __init__.py          # Package initialization
-│   ├── server.py            # Main MCP server with 16 tools
-│   └── bexio_client.py      # Bexio API client with OAuth support
-├── .env.example             # Environment variables template
-├── requirements.txt         # Python dependencies
-├── pyproject.toml          # Project configuration
-└── README.md               # This file
+│   ├── __init__.py
+│   ├── server.py
+│   └── bexio_client.py
+├── pyproject.toml
+└── README.md
 ```
 
 ## Contributing
