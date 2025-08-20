@@ -70,13 +70,58 @@ class BexioClient:
             error_detail = f"HTTP {e.response.status_code}"
             try:
                 error_data = e.response.json()
-                if "message" in error_data:
-                    error_detail += f": {error_data['message']}"
-            except:
+                # Prefer message if present
+                message = error_data.get("message") or error_data.get("error") or error_data.get("detail")
+                if message:
+                    error_detail += f": {message}"
+                # If there are field-level errors, include them for clarity
+                field_errors = error_data.get("errors")
+                if field_errors:
+                    error_detail += f" | errors: {field_errors}"
+            except Exception:
+                # Fallback to raw text
                 error_detail += f": {e.response.text}"
             raise ValueError(f"Bexio API error - {error_detail}")
         except Exception as e:
             raise ValueError(f"Request failed: {str(e)}")
+
+    def _filter_by_criteria(
+        self,
+        items: List[Dict[str, Any]],
+        criteria: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Filter a list of dicts according to bexio-like criteria.
+
+        Supports minimal subset: criteria in {"=", "like"}. Compares as strings when needed.
+        """
+        def matches(item: Dict[str, Any]) -> bool:
+            for cond in criteria:
+                field = cond.get("field")
+                value = cond.get("value")
+                op = (cond.get("criteria") or "=").lower()
+                if not field:
+                    return False
+                actual = item
+                for part in field.split('.'):
+                    if isinstance(actual, dict):
+                        actual = actual.get(part)
+                    else:
+                        actual = None
+                        break
+                if op == "=":
+                    if str(actual) != str(value):
+                        return False
+                elif op == "like":
+                    if value is None:
+                        return False
+                    if str(value).lower() not in str(actual).lower():
+                        return False
+                else:
+                    # Unknown operator: fail safe (exclude)
+                    return False
+            return True
+
+        return [it for it in items if matches(it)]
 
     async def get(
         self,
@@ -136,13 +181,27 @@ class BexioClient:
 
     async def create_contact(self, contact_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new contact."""
-        return await self.post("/contact", contact_data)
+        normalized: Dict[str, Any] = dict(contact_data)
+        # Map common alias 'email' -> 'mail' expected by Bexio
+        if "email" in normalized and "mail" not in normalized:
+            normalized["mail"] = normalized.pop("email")
+        return await self.post("/contact", normalized)
 
     async def update_contact(
         self, contact_id: int, contact_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Update an existing contact."""
-        return await self.put(f"/contact/{contact_id}", contact_data)
+        normalized: Dict[str, Any] = dict(contact_data)
+        if "email" in normalized and "mail" not in normalized:
+            normalized["mail"] = normalized.pop("email")
+        # Merge with existing contact to satisfy required fields on PUT
+        try:
+            existing = await self.get_contact(contact_id)
+            merged: Dict[str, Any] = {**existing, **normalized}
+            return await self.put(f"/contact/{contact_id}", merged)
+        except Exception:
+            # Fallback: attempt update with provided fields only
+            return await self.put(f"/contact/{contact_id}", normalized)
 
     async def delete_contact(self, contact_id: int) -> None:
         """Delete a contact."""
@@ -176,6 +235,15 @@ class BexioClient:
 
     async def create_invoice(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new invoice."""
+        # Basic validation to avoid opaque 422 errors
+        if not invoice_data.get("contact_id"):
+            raise ValueError("Invoice requires contact_id")
+        positions = invoice_data.get("positions")
+        if not positions or not isinstance(positions, list):
+            raise ValueError(
+                "Invoice requires at least one position. Provide positions=[{" 
+                "\"type\": \"KbPositionCustom\", \"text\": \"Item description\", \"amount\": 1, \"unit_price\": 10.0}]"
+            )
         return await self.post("/kb_invoice", invoice_data)
 
     async def update_invoice(
@@ -188,9 +256,22 @@ class BexioClient:
         """Delete an invoice."""
         await self.delete(f"/kb_invoice/{invoice_id}")
 
-    async def search_invoices(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Search invoices with criteria."""
-        return await self.post("/kb_invoice/search", {"criteria": criteria})
+    async def search_invoices(self, criteria: List[Dict[str, Any]], *, fallback_limit: int = 200) -> List[Dict[str, Any]]:
+        """Search invoices with criteria.
+
+        Tries API search; if it fails with validation (e.g., "field not set"), falls back to
+        fetching a batch and filtering client-side using '=' and 'like'.
+        """
+        try:
+            return await self.post("/kb_invoice/search", criteria)
+        except ValueError as e:
+            # Try alternate payload shape {"criteria": [...]} in case of schema variance
+            try:
+                return await self.post("/kb_invoice/search", {"criteria": criteria})
+            except ValueError:
+                # Fallback to client-side filtering
+                batch = await self.list_invoices(limit=fallback_limit)
+                return self._filter_by_criteria(batch, criteria)
 
     # Quote methods
     async def list_quotes(
@@ -228,9 +309,16 @@ class BexioClient:
         """Delete a quote."""
         await self.delete(f"/kb_offer/{quote_id}")
 
-    async def search_quotes(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Search quotes with criteria."""
-        return await self.post("/kb_offer/search", {"criteria": criteria})
+    async def search_quotes(self, criteria: List[Dict[str, Any]], *, fallback_limit: int = 200) -> List[Dict[str, Any]]:
+        """Search quotes with criteria with robust fallbacks (see search_invoices)."""
+        try:
+            return await self.post("/kb_offer/search", criteria)
+        except ValueError:
+            try:
+                return await self.post("/kb_offer/search", {"criteria": criteria})
+            except ValueError:
+                batch = await self.list_quotes(limit=fallback_limit)
+                return self._filter_by_criteria(batch, criteria)
 
     # Order methods
     async def list_orders(
