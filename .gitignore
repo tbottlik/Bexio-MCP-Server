@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# JetBrains IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+
+# Node/npm leftovers
+node_modules/
+
+# Local tools
+.codeium/
+

@@ -1,0 +1,353 @@
+"""Bexio REST API client for API communication."""
+
+import httpx
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urljoin
+
+from pydantic import BaseModel, Field, ValidationError
+
+
+class BexioConfig(BaseModel):
+    """Configuration for Bexio connection."""
+
+    api_url: str = Field(default="https://api.bexio.com/2.0", description="Bexio API base URL")
+    access_token: str = Field(..., description="Bexio OAuth access token")
+    timeout: int = Field(120, description="Request timeout in seconds")
+
+
+class BexioClient:
+    """Client for interacting with Bexio via REST API."""
+
+    def __init__(self, config: BexioConfig) -> None:
+        """Initialize Bexio client with configuration."""
+        self.config = config
+        self.api_url = config.api_url.rstrip("/")
+        self.access_token = config.access_token
+        self.timeout = config.timeout
+
+        # Initialize HTTP client
+        self.client = httpx.AsyncClient(
+            timeout=self.timeout,
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "bexio-mcp-server/0.1.0 (+https://github.com/tomasbottlik/bexio-mcp-server)",
+            }
+        )
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.client.aclose()
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Make a request to the Bexio API."""
+        # Build URL without dropping the version path (avoid urljoin resetting path)
+        base = self.api_url.rstrip('/')
+        path = endpoint if endpoint.startswith('/') else f'/{endpoint}'
+        url = f"{base}{path}"
+        
+        try:
+            response = await self.client.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json_data,
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_detail = f"HTTP {e.response.status_code}"
+            try:
+                error_data = e.response.json()
+                if "message" in error_data:
+                    error_detail += f": {error_data['message']}"
+            except:
+                error_detail += f": {e.response.text}"
+            raise ValueError(f"Bexio API error - {error_detail}")
+        except Exception as e:
+            raise ValueError(f"Request failed: {str(e)}")
+
+    async def get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Make a GET request."""
+        return await self._request("GET", endpoint, params=params)
+
+    async def post(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Make a POST request."""
+        return await self._request("POST", endpoint, params=params, json_data=data)
+
+    async def put(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Make a PUT request."""
+        return await self._request("PUT", endpoint, params=params, json_data=data)
+
+    async def delete(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Make a DELETE request."""
+        return await self._request("DELETE", endpoint, params=params)
+
+    # Contact methods
+    async def list_contacts(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of contacts."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/contact", params=params)
+
+    async def get_contact(self, contact_id: int) -> Dict[str, Any]:
+        """Fetch a specific contact."""
+        return await self.get(f"/contact/{contact_id}")
+
+    async def create_contact(self, contact_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new contact."""
+        return await self.post("/contact", contact_data)
+
+    async def update_contact(
+        self, contact_id: int, contact_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing contact."""
+        return await self.put(f"/contact/{contact_id}", contact_data)
+
+    async def delete_contact(self, contact_id: int) -> None:
+        """Delete a contact."""
+        await self.delete(f"/contact/{contact_id}")
+
+    async def search_contacts(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search contacts with criteria."""
+        return await self.post("/contact/search", criteria)
+
+    # Invoice methods
+    async def list_invoices(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of invoices."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/kb_invoice", params=params)
+
+    async def get_invoice(self, invoice_id: int) -> Dict[str, Any]:
+        """Fetch a specific invoice."""
+        return await self.get(f"/kb_invoice/{invoice_id}")
+
+    async def create_invoice(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new invoice."""
+        return await self.post("/kb_invoice", invoice_data)
+
+    async def update_invoice(
+        self, invoice_id: int, invoice_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing invoice."""
+        return await self.put(f"/kb_invoice/{invoice_id}", invoice_data)
+
+    async def delete_invoice(self, invoice_id: int) -> None:
+        """Delete an invoice."""
+        await self.delete(f"/kb_invoice/{invoice_id}")
+
+    async def search_invoices(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search invoices with criteria."""
+        return await self.post("/kb_invoice/search", {"criteria": criteria})
+
+    # Quote methods
+    async def list_quotes(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of quotes."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/kb_offer", params=params)
+
+    async def get_quote(self, quote_id: int) -> Dict[str, Any]:
+        """Fetch a specific quote."""
+        return await self.get(f"/kb_offer/{quote_id}")
+
+    async def create_quote(self, quote_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new quote."""
+        return await self.post("/kb_offer", quote_data)
+
+    async def update_quote(
+        self, quote_id: int, quote_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing quote."""
+        return await self.put(f"/kb_offer/{quote_id}", quote_data)
+
+    async def delete_quote(self, quote_id: int) -> None:
+        """Delete a quote."""
+        await self.delete(f"/kb_offer/{quote_id}")
+
+    async def search_quotes(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search quotes with criteria."""
+        return await self.post("/kb_offer/search", {"criteria": criteria})
+
+    # Order methods
+    async def list_orders(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of orders."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/kb_order", params=params)
+
+    async def get_order(self, order_id: int) -> Dict[str, Any]:
+        """Fetch a specific order."""
+        return await self.get(f"/kb_order/{order_id}")
+
+    async def create_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new order."""
+        return await self.post("/kb_order", order_data)
+
+    async def update_order(
+        self, order_id: int, order_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing order."""
+        return await self.put(f"/kb_order/{order_id}", order_data)
+
+    async def delete_order(self, order_id: int) -> None:
+        """Delete an order."""
+        await self.delete(f"/kb_order/{order_id}")
+
+    async def search_orders(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search orders with criteria."""
+        return await self.post("/kb_order/search", {"criteria": criteria})
+
+    # Project methods
+    async def list_projects(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of projects."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/pr_project", params=params)
+
+    async def get_project(self, project_id: int) -> Dict[str, Any]:
+        """Fetch a specific project."""
+        return await self.get(f"/pr_project/{project_id}")
+
+    async def create_project(self, project_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new project."""
+        return await self.post("/pr_project", project_data)
+
+    async def update_project(
+        self, project_id: int, project_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing project."""
+        return await self.put(f"/pr_project/{project_id}", project_data)
+
+    async def delete_project(self, project_id: int) -> None:
+        """Delete a project."""
+        await self.delete(f"/pr_project/{project_id}")
+
+    async def search_projects(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search projects with criteria."""
+        return await self.post("/pr_project/search", {"criteria": criteria})
+
+    # Item methods
+    async def list_items(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a list of items."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if order_by is not None:
+            params["order_by"] = order_by
+        
+        return await self.get("/article", params=params)
+
+    async def get_item(self, item_id: int) -> Dict[str, Any]:
+        """Fetch a specific item."""
+        return await self.get(f"/article/{item_id}")
+
+    async def create_item(self, item_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new item."""
+        return await self.post("/article", item_data)
+
+    async def update_item(
+        self, item_id: int, item_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing item."""
+        return await self.put(f"/article/{item_id}", item_data)
+
+    async def delete_item(self, item_id: int) -> None:
+        """Delete an item."""
+        await self.delete(f"/article/{item_id}")
+
+    async def search_items(self, criteria: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search items with criteria."""
+        return await self.post("/article/search", {"criteria": criteria})
