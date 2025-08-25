@@ -16,6 +16,7 @@ from mcp.types import TextContent, Tool
 from pydantic import ValidationError
 
 from mcp_server_bexio.bexio_client import BexioClient, BexioConfig
+from mcp_server_bexio.field_validator import BexioFieldValidator
 
 # Load environment variables (works even if CWD is not the project root)
 _found_env = find_dotenv()
@@ -31,11 +32,12 @@ print("[bexio] server module loaded; env file=", _found_env, file=sys.stderr, fl
 
 # Global Bexio client instance
 bexio_client: Optional[BexioClient] = None
+field_validator: Optional[BexioFieldValidator] = None
 
 
 async def get_bexio_client() -> BexioClient:
     """Get or create Bexio client instance."""
-    global bexio_client
+    global bexio_client, field_validator
     
     if bexio_client is None:
         try:
@@ -49,6 +51,7 @@ async def get_bexio_client() -> BexioClient:
                     "Missing BEXIO_ACCESS_TOKEN. Set it in your Claude config env or in a .env file."
                 )
             bexio_client = BexioClient(config)
+            field_validator = BexioFieldValidator(bexio_client)
         except ValidationError as e:
             raise ValueError(f"Invalid Bexio configuration: {e}")
         except Exception as e:
@@ -129,7 +132,7 @@ async def list_tools() -> List[Tool]:
                             "country_id": {"type": "integer", "description": "Country ID (1=Switzerland, 2=Germany, etc.)"},
                             "language_id": {"type": "integer", "description": "Language ID (1=German, 2=French, 3=Italian, 4=English)"}
                         },
-                        "required": ["name_1", "contact_type_id"]
+                        "required": ["name_1", "contact_type_id", "user_id", "owner_id"]
                     }
                 },
                 "required": ["contact_data"]
@@ -232,7 +235,7 @@ async def list_tools() -> List[Tool]:
                                 }
                             }
                         },
-                        "required": ["contact_id"]
+                        "required": ["contact_id", "user_id", "positions"]
                     }
                 },
                 "required": ["invoice_data"]
@@ -311,7 +314,7 @@ async def list_tools() -> List[Tool]:
                                 }
                             }
                         },
-                        "required": ["contact_id"]
+                        "required": ["contact_id", "user_id"]
                     }
                 },
                 "required": ["quote_data"]
@@ -355,7 +358,7 @@ async def list_tools() -> List[Tool]:
                             "pr_project_type_id": {"type": "integer", "description": "Project type ID", "default": 1},
                             "pr_state_id": {"type": "integer", "description": "Project state ID", "default": 1}
                         },
-                        "required": ["name", "contact_id"]
+                        "required": ["name", "contact_id", "user_id", "pr_state_id", "pr_project_type_id"]
                     }
                 },
                 "required": ["project_data"]
@@ -443,6 +446,25 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
     """Handle tool calls."""
     try:
         client = await get_bexio_client()
+        global field_validator
+        
+        # Pre-validate and complete fields for creation/update operations
+        if name in ["create_contact", "update_contact", "create_invoice", "create_quote", "create_project", "create_item"]:
+            context_id = None
+            if "update" in name:
+                # Extract ID for update operations
+                if name == "update_contact":
+                    context_id = arguments.get("contact_id")
+                    
+            completed_args, missing_fields = await field_validator.validate_and_complete_fields(
+                name, arguments, context_id
+            )
+            
+            if missing_fields:
+                error_msg = field_validator.create_user_prompt_message(missing_fields)
+                return [TextContent(type="text", text=f"Validation Error: {error_msg}")]
+                
+            arguments = completed_args
         
         if name == "search_contacts":
             criteria = arguments.get("criteria", [])
@@ -556,7 +578,20 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
     
     except Exception as e:
-        return [TextContent(type="text", text=f"Error: {str(e)}")]
+        error_msg = str(e)
+        
+        # Enhanced 422 error handling
+        if "422" in error_msg or "HTTP 422" in error_msg:
+            # Try to parse the error and provide helpful guidance
+            if field_validator:
+                parsed_fields = field_validator.parse_422_error(error_msg)
+                if parsed_fields:
+                    helpful_msg = field_validator.create_user_prompt_message(parsed_fields)
+                    return [TextContent(type="text", text=f"Bexio API Error (422 - Missing Required Fields):\n{helpful_msg}\n\nOriginal error: {error_msg}")]
+            
+            return [TextContent(type="text", text=f"Bexio API Error (422 - Missing Required Fields): {error_msg}\n\nThis usually means mandatory fields are missing. Please check the function requirements and provide all necessary data.")]
+        
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
 
 async def main():
