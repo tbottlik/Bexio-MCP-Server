@@ -1,4 +1,69 @@
-"""MCP server for Bexio integration."""
+"""MCP server for Bexio integration.
+
+FIELD VALIDATION & AUTO-FILL BEHAVIOR:
+=====================================
+
+This MCP server implements intelligent field validation and auto-completion for Bexio API calls.
+Understanding the field types and validation behavior is crucial for successful API interactions.
+
+FIELD TYPES:
+-----------
+1. REQUIRED_USER_INPUT: Fields that MUST be provided by the user
+   - Examples: name_1 (contacts), contact_id (invoices), intern_name (items)
+   - These fields cannot be auto-filled and will cause validation errors if missing
+
+2. AUTO_FILL_DEFAULT: Fields auto-filled with safe default values if missing
+   - user_id: Auto-filled with 1 (default user) - can be overridden by user
+   - contact_type_id: Auto-filled with 2 (person) for contacts - can be overridden by user
+   - owner_id: Auto-filled with 1 (default owner) - can be overridden by user
+   - pr_state_id: Auto-filled with 1 (active) for projects - can be overridden by user
+   - pr_project_type_id: Auto-filled with 1 (default type) for projects - can be overridden by user
+   - article_type_id: Auto-filled with 1 (default type) for items - can be overridden by user
+   - currency_id: Auto-filled with 1 (CHF) for items - can be overridden by user
+   - is_stock: Auto-filled with false for items - can be overridden by user
+   - delivery_price: Auto-filled with 0 for items - can be overridden by user
+   NOTE: User-provided values always take precedence over auto-filled defaults
+
+3. AUTO_FILL_LOOKUP: Fields retrieved from existing data when updating
+   - Used in update_contact to preserve existing required fields
+   - Ensures updates don't accidentally remove required data
+
+4. API_HANDLED: Fields where the Bexio API provides intelligent defaults
+   - nr field: API auto-generates sequential numbers
+   - tax_id: API provides fallback tax rates when missing
+
+INVOICE/QUOTE POSITIONS:
+-----------------------
+Position arrays require special attention:
+- type: Auto-filled with 'KbPositionCustom' if missing
+- text: REQUIRED - must describe the line item
+- amount: Auto-filled with 1 if missing
+- unit_price: Auto-filled with 0.0 if missing
+- tax_id: Auto-looked up from valid system taxes if missing
+
+ERROR HANDLING:
+--------------
+422 Validation Errors are enhanced with helpful guidance:
+- Missing required fields are detected and explained
+- Invalid field values are identified
+- Auto-completion attempts are logged
+- Original API error messages are preserved for debugging
+
+VALIDATION FLOW:
+---------------
+1. Pre-validation checks for truly required fields
+2. Auto-completion of missing fields with safe defaults
+3. API call with completed data
+4. Enhanced error messages if validation still fails
+5. Retry logic for recoverable validation errors
+
+TESTING RECOMMENDATIONS:
+-----------------------
+- Test with minimal required fields to verify auto-completion
+- Test with invalid field values to verify error handling
+- Test update operations to ensure existing data preservation
+- Verify tax_id lookup functionality with various scenarios
+"""
 
 import asyncio
 import json
@@ -66,7 +131,7 @@ async def list_tools() -> List[Tool]:
     return [
         Tool(
             name="search_contacts",
-            description="Search for contacts in Bexio using specific criteria",
+            description="Search for contacts in Bexio using specific criteria. REQUIRED: criteria array with field/value/criteria objects. AUTO-FILLED: limit=50, offset=0.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -101,7 +166,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="get_contact",
-            description="Get detailed information about a specific contact",
+            description="Get detailed information about a specific contact. REQUIRED: contact_id.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -112,7 +177,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="create_contact",
-            description="Create a new contact in Bexio",
+            description="Create a new contact in Bexio. REQUIRED: name_1. AUTO-FILLED: contact_type_id=2, user_id=1, owner_id=1. System handles field validation and auto-completion.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -120,9 +185,11 @@ async def list_tools() -> List[Tool]:
                         "type": "object",
                         "description": "Contact data",
                         "properties": {
-                            "name_1": {"type": "string", "description": "First name or company name (required)"},
+                            "name_1": {"type": "string", "description": "REQUIRED: First name or company name"},
                             "name_2": {"type": "string", "description": "Last name (for persons)"},
-                            "contact_type_id": {"type": "integer", "description": "Contact type: 1=company, 2=person (required)"},
+                            "contact_type_id": {"type": "integer", "description": "REQUIRED: Contact type (1=company, 2=person). Auto-filled with 2 if missing."},
+                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                            "owner_id": {"type": "integer", "description": "REQUIRED: Owner ID. Auto-filled with 1 if missing."},
                             "email": {"type": "string", "description": "Email address"},
                             "phone_fixed": {"type": "string", "description": "Fixed phone number"},
                             "phone_mobile": {"type": "string", "description": "Mobile phone number"},
@@ -132,7 +199,7 @@ async def list_tools() -> List[Tool]:
                             "country_id": {"type": "integer", "description": "Country ID (1=Switzerland, 2=Germany, etc.)"},
                             "language_id": {"type": "integer", "description": "Language ID (1=German, 2=French, 3=Italian, 4=English)"}
                         },
-                        "required": ["name_1", "contact_type_id", "user_id", "owner_id"]
+                        "required": ["name_1"]
                     }
                 },
                 "required": ["contact_data"]
@@ -140,7 +207,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="update_contact",
-            description="Update an existing contact",
+            description="Update an existing contact. REQUIRED: contact_id. AUTO-RETRIEVED: name_1, contact_type_id, user_id, owner_id, nr from existing contact. System preserves required fields.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -149,8 +216,12 @@ async def list_tools() -> List[Tool]:
                         "type": "object",
                         "description": "Updated contact data",
                         "properties": {
-                            "name_1": {"type": "string", "description": "First name or company name"},
+                            "name_1": {"type": "string", "description": "REQUIRED: First name or company name. Auto-retrieved from existing contact if missing."},
                             "name_2": {"type": "string", "description": "Last name"},
+                            "contact_type_id": {"type": "integer", "description": "REQUIRED: Contact type. Auto-retrieved from existing contact if missing."},
+                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-retrieved from existing contact if missing."},
+                            "owner_id": {"type": "integer", "description": "REQUIRED: Owner ID. Auto-retrieved from existing contact if missing."},
+                            "nr": {"type": "string", "description": "Contact number (auto-generated). API handles gracefully if missing."},
                             "mail": {"type": "string", "description": "Email address"},
                             "phone_fixed": {"type": "string", "description": "Phone number"},
                             "address": {"type": "string", "description": "Street address"},
@@ -164,7 +235,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="list_contacts",
-            description="List all contacts with optional filtering",
+            description="List all contacts with optional filtering. AUTO-FILLED: limit=50, offset=0. Optional: order_by.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -176,7 +247,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="search_invoices",
-            description="Search for invoices in Bexio",
+            description="Search for invoices in Bexio. REQUIRED: criteria array with field/value/criteria objects. AUTO-FILLED: limit=50, offset=0.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -200,7 +271,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="get_invoice",
-            description="Get detailed information about a specific invoice",
+            description="Get detailed information about a specific invoice. REQUIRED: invoice_id.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -211,39 +282,36 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="create_invoice",
-            description="Create a new invoice in Bexio",
+            description="Create a new invoice in Bexio. REQUIRED: contact_id, positions array with text field. AUTO-FILLED: user_id=1, position type/amount/unit_price, tax_id lookup. System handles validation.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "invoice_data": {
-                        "type": "object",
-                        "description": "Invoice data",
-                        "properties": {
-                            "contact_id": {"type": "integer", "description": "Contact ID"},
-                            "title": {"type": "string", "description": "Invoice title"},
-                            "positions": {
-                                "type": "array",
-                                "description": "Invoice line items",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {"type": "string", "description": "Position type"},
-                                        "text": {"type": "string", "description": "Item description"},
-                                        "amount": {"type": "number", "description": "Quantity"},
-                                        "unit_price": {"type": "number", "description": "Unit price"}
-                                    }
-                                }
-                            }
-                        },
-                        "required": ["contact_id", "user_id", "positions"]
+                    "contact_id": {"type": "integer", "description": "REQUIRED: Contact ID for the invoice"},
+                    "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                    "nr": {"type": "string", "description": "Invoice number. API auto-generates if missing."},
+                    "title": {"type": "string", "description": "Invoice title"},
+                    "positions": {
+                        "type": "array",
+                        "description": "REQUIRED: Invoice line items array. Each position needs: type, text, amount, unit_price, tax_id",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "description": "REQUIRED: Position type. Auto-filled with 'KbPositionCustom' if missing."},
+                                "text": {"type": "string", "description": "REQUIRED: Item description. Auto-filled with 'Service' if missing."},
+                                "amount": {"type": "number", "description": "REQUIRED: Quantity. Auto-filled with 1 if missing."},
+                                "unit_price": {"type": "number", "description": "REQUIRED: Unit price. Auto-filled with 0.0 if missing."},
+                                "tax_id": {"type": "integer", "description": "REQUIRED: Tax ID. Auto-looked up from valid system taxes if missing."}
+                            },
+                            "required": ["text"]
+                        }
                     }
                 },
-                "required": ["invoice_data"]
+                "required": ["contact_id", "positions"]
             }
         ),
         Tool(
             name="list_invoices",
-            description="List all invoices with optional filtering",
+            description="List all invoices with optional filtering. AUTO-FILLED: limit=50, offset=0. Optional: order_by.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -255,7 +323,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="search_quotes",
-            description="Search for quotes in Bexio",
+            description="Search for quotes in Bexio. REQUIRED: criteria array with field/value/criteria objects. AUTO-FILLED: limit=50, offset=0.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -279,7 +347,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="get_quote",
-            description="Get detailed information about a specific quote",
+            description="Get detailed information about a specific quote. REQUIRED: quote_id.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -290,7 +358,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="create_quote",
-            description="Create a new quote in Bexio",
+            description="Create a new quote in Bexio. REQUIRED: contact_id. AUTO-FILLED: user_id=1. Positions optional but recommended with same auto-fill as invoices. System handles validation.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -298,23 +366,27 @@ async def list_tools() -> List[Tool]:
                         "type": "object",
                         "description": "Quote data",
                         "properties": {
-                            "contact_id": {"type": "integer", "description": "Contact ID"},
+                            "contact_id": {"type": "integer", "description": "REQUIRED: Contact ID for the quote"},
+                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                            "nr": {"type": "string", "description": "Quote number. API auto-generates if missing."},
                             "title": {"type": "string", "description": "Quote title"},
                             "positions": {
                                 "type": "array",
-                                "description": "Quote line items",
+                                "description": "Quote line items (optional for quotes, but recommended)",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "type": {"type": "string", "description": "Position type"},
-                                        "text": {"type": "string", "description": "Item description"},
-                                        "amount": {"type": "number", "description": "Quantity"},
-                                        "unit_price": {"type": "number", "description": "Unit price"}
-                                    }
+                                        "type": {"type": "string", "description": "REQUIRED: Position type. Auto-filled with 'KbPositionCustom' if missing."},
+                                        "text": {"type": "string", "description": "REQUIRED: Item description. Auto-filled with 'Service' if missing."},
+                                        "amount": {"type": "number", "description": "REQUIRED: Quantity. Auto-filled with 1 if missing."},
+                                        "unit_price": {"type": "number", "description": "REQUIRED: Unit price. Auto-filled with 0.0 if missing."},
+                                        "tax_id": {"type": "integer", "description": "REQUIRED: Tax ID. Auto-looked up from valid system taxes if missing."}
+                                    },
+                                    "required": ["text"]
                                 }
                             }
                         },
-                        "required": ["contact_id", "user_id"]
+                        "required": ["contact_id"]
                     }
                 },
                 "required": ["quote_data"]
@@ -322,7 +394,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="list_projects",
-            description="List all projects with optional filtering",
+            description="List all projects with optional filtering. AUTO-FILLED: limit=50, offset=0. Optional: order_by.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -334,7 +406,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="get_project",
-            description="Get detailed information about a specific project",
+            description="Get detailed information about a specific project. REQUIRED: project_id.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -345,7 +417,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="create_project",
-            description="Create a new project in Bexio",
+            description="Create a new project in Bexio. REQUIRED: name, contact_id. AUTO-FILLED: user_id=1, pr_state_id=1, pr_project_type_id=1. System handles field validation.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -353,12 +425,14 @@ async def list_tools() -> List[Tool]:
                         "type": "object",
                         "description": "Project data",
                         "properties": {
-                            "name": {"type": "string", "description": "Project name"},
-                            "contact_id": {"type": "integer", "description": "Contact ID"},
-                            "pr_project_type_id": {"type": "integer", "description": "Project type ID", "default": 1},
-                            "pr_state_id": {"type": "integer", "description": "Project state ID", "default": 1}
+                            "name": {"type": "string", "description": "REQUIRED: Project name"},
+                            "contact_id": {"type": "integer", "description": "REQUIRED: Contact ID for the project"},
+                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                            "nr": {"type": "string", "description": "Project number. API auto-generates if missing."},
+                            "pr_project_type_id": {"type": "integer", "description": "REQUIRED: Project type ID. Auto-filled with 1 if missing."},
+                            "pr_state_id": {"type": "integer", "description": "REQUIRED: Project state ID. Auto-filled with 1 if missing."}
                         },
-                        "required": ["name", "contact_id", "user_id", "pr_state_id", "pr_project_type_id"]
+                        "required": ["name", "contact_id"]
                     }
                 },
                 "required": ["project_data"]
@@ -366,7 +440,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="list_items",
-            description="List all items/articles with optional filtering",
+            description="List all items/articles with optional filtering. AUTO-FILLED: limit=50, offset=0. Optional: order_by.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -378,7 +452,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="get_item",
-            description="Get detailed information about a specific item/article",
+            description="Get detailed information about a specific item/article. REQUIRED: item_id.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -389,7 +463,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="create_item",
-            description="Create a new item/article in Bexio",
+            description="Create a new item/article in Bexio. REQUIRED: intern_name. AUTO-FILLED: user_id=1, article_type_id=1, currency_id=1, is_stock=false, delivery_price=0. System handles validation.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -397,25 +471,26 @@ async def list_tools() -> List[Tool]:
                         "type": "object",
                         "description": "Item data",
                         "properties": {
-                            "user_id": {"type": "integer", "description": "User ID", "default": 1},
-                            "article_type_id": {"type": "integer", "description": "Article type ID", "default": 1},
+                            "intern_name": {"type": "string", "description": "REQUIRED: Internal item name"},
+                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                            "nr": {"type": "string", "description": "Item number. API auto-generates if missing."},
+                            "article_type_id": {"type": "integer", "description": "REQUIRED: Article type ID. Auto-filled with 1 if missing."},
                             "contact_id": {"type": "integer", "description": "Supplier contact ID"},
                             "deliverer_code": {"type": "string", "description": "Supplier article number"},
                             "deliverer_name": {"type": "string", "description": "Supplier name"},
                             "deliverer_description": {"type": "string", "description": "Supplier description"},
                             "intern_code": {"type": "string", "description": "Internal article number"},
-                            "intern_name": {"type": "string", "description": "Internal name"},
                             "intern_description": {"type": "string", "description": "Internal description"},
                             "purchase_price": {"type": "number", "description": "Purchase price"},
                             "sale_price": {"type": "number", "description": "Sale price"},
                             "purchase_total": {"type": "number", "description": "Total purchase amount"},
                             "sale_total": {"type": "number", "description": "Total sale amount"},
-                            "currency_id": {"type": "integer", "description": "Currency ID", "default": 1},
+                            "currency_id": {"type": "integer", "description": "REQUIRED: Currency ID. Auto-filled with 1 if missing."},
                             "tax_income_id": {"type": "integer", "description": "Income tax ID"},
                             "tax_id": {"type": "integer", "description": "Tax ID"},
                             "tax_expense_id": {"type": "integer", "description": "Expense tax ID"},
                             "unit_id": {"type": "integer", "description": "Unit ID"},
-                            "is_stock": {"type": "boolean", "description": "Is stock item", "default": False},
+                            "is_stock": {"type": "boolean", "description": "REQUIRED: Is stock item. Auto-filled with false if missing."},
                             "stock_id": {"type": "integer", "description": "Stock ID"},
                             "stock_min": {"type": "number", "description": "Minimum stock"},
                             "stock_reserved": {"type": "number", "description": "Reserved stock"},
@@ -429,7 +504,7 @@ async def list_tools() -> List[Tool]:
                             "volume": {"type": "number", "description": "Volume"},
                             "html_text": {"type": "string", "description": "HTML description"},
                             "remarks": {"type": "string", "description": "Remarks"},
-                            "delivery_price": {"type": "number", "description": "Delivery price", "default": 0},
+                            "delivery_price": {"type": "number", "description": "REQUIRED: Delivery price. Auto-filled with 0 if missing."},
                             "article_group_id": {"type": "integer", "description": "Article group ID"}
                         },
                         "required": ["intern_name"]
@@ -448,23 +523,9 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         client = await get_bexio_client()
         global field_validator
         
-        # Pre-validate and complete fields for creation/update operations
-        if name in ["create_contact", "update_contact", "create_invoice", "create_quote", "create_project", "create_item"]:
-            context_id = None
-            if "update" in name:
-                # Extract ID for update operations
-                if name == "update_contact":
-                    context_id = arguments.get("contact_id")
-                    
-            completed_args, missing_fields = await field_validator.validate_and_complete_fields(
-                name, arguments, context_id
-            )
-            
-            if missing_fields:
-                error_msg = field_validator.create_user_prompt_message(missing_fields)
-                return [TextContent(type="text", text=f"Validation Error: {error_msg}")]
-                
-            arguments = completed_args
+        # Auto-complete fields for creation/update operations
+        if name in ["create_contact", "update_contact", "create_invoice", "update_invoice", "create_quote", "update_quote", "create_project", "update_project", "create_item"]:
+            arguments = await field_validator.auto_complete_fields(name, arguments)
         
         if name == "search_contacts":
             criteria = arguments.get("criteria", [])
@@ -511,8 +572,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
         
         elif name == "create_invoice":
-            invoice_data = arguments["invoice_data"]
-            result = await client.create_invoice(invoice_data)
+            result = await client.create_invoice(arguments)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
         
         elif name == "list_invoices":
@@ -582,14 +642,9 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         
         # Enhanced 422 error handling
         if "422" in error_msg or "HTTP 422" in error_msg:
-            # Try to parse the error and provide helpful guidance
             if field_validator:
-                parsed_fields = field_validator.parse_422_error(error_msg)
-                if parsed_fields:
-                    helpful_msg = field_validator.create_user_prompt_message(parsed_fields)
-                    return [TextContent(type="text", text=f"Bexio API Error (422 - Missing Required Fields):\n{helpful_msg}\n\nOriginal error: {error_msg}")]
-            
-            return [TextContent(type="text", text=f"Bexio API Error (422 - Missing Required Fields): {error_msg}\n\nThis usually means mandatory fields are missing. Please check the function requirements and provide all necessary data.")]
+                helpful_msg = field_validator.create_helpful_error_message(error_msg)
+                return [TextContent(type="text", text=helpful_msg)]
         
         return [TextContent(type="text", text=f"Error: {error_msg}")]
 
