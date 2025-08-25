@@ -10,6 +10,8 @@ MCP server for Bexio ERP integration - enables AI assistants to interact with Be
 - 🏗️ **Project Management**: Create and track projects
 - 📦 **Item/Article Management**: Manage products and services
 - 🔐 **Secure Authentication**: Uses Bexio Personal Access Tokens (PAT)
+- ✅ **Smart Field Validation**: Automatic field completion and 422 error prevention
+- 🛡️ **Enhanced Error Handling**: Clear guidance for missing or invalid fields
 
 ## Installation
 
@@ -210,7 +212,35 @@ Create a new item/article.
 - Monitor API usage and access logs
 - Implement proper error handling for API failures
 
+## Smart Field Validation
+
+This MCP server includes intelligent field validation to prevent common 422 errors and improve user experience:
+
+### Automatic Field Completion
+- **Required fields**: Prompts users for critical missing information
+- **Safe defaults**: Auto-fills non-critical fields (user_id, project states, etc.)
+- **Dynamic lookups**: Retrieves existing data for updates (contact numbers, tax IDs)
+- **API-aware**: Skips fields where Bexio API provides intelligent defaults
+
+### Enhanced Error Handling
+- **Pre-validation**: Catches missing fields before API calls
+- **Clear guidance**: Specific error messages explaining what's needed
+- **Smart tax handling**: Automatically looks up valid tax IDs from your Bexio system
+- **Field-specific help**: Distinguishes between missing vs invalid field values
+
+### Field Types
+- `REQUIRED_USER_INPUT`: Critical fields requiring user input (contact names, IDs)
+- `AUTO_FILL_DEFAULT`: Safe defaults (user_id=1, project_state_id=1)
+- `AUTO_FILL_LOOKUP`: Retrieved from existing data (for updates)
+- `API_HANDLED`: Fields where API provides fallback handling
+
 ## Troubleshooting
+
+### 422 Field Validation Errors
+- **Enhanced handling**: The server now provides specific guidance for missing fields
+- **Auto-completion**: Many required fields are filled automatically with safe defaults
+- **Tax ID issues**: System automatically looks up valid tax IDs from your Bexio account
+- **Contact updates**: Required fields like `nr` are retrieved from existing contact data
 
 ### 401 Authentication Failed
 - **Most common issue**: Your Personal Access Token has expired (PAT tokens are valid for 6 months)
@@ -235,7 +265,8 @@ bexio-mcp-server/
 ├── mcp_server_bexio/
 │   ├── __init__.py
 │   ├── server.py
-│   └── bexio_client.py
+│   ├── bexio_client.py
+│   └── field_validator.py
 ├── pyproject.toml
 └── README.md
 ```
