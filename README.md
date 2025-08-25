@@ -152,7 +152,9 @@ Required fields:
 Auto-filled fields (can be overridden):
 - `user_id`: User ID (default: 1)
 - `nr`: Invoice number (API auto-generates)
-- Position fields: `type`, `amount`, `unit_price`, `tax_id` (looked up)
+- Position fields: `type`, `amount`, `unit_price`, `tax_id` (default: Tax ID 3 - 0% rate)
+
+Note: Uses flat schema structure for consistent UI experience.
 
 #### list_invoices
 List all invoices with optional filtering.
@@ -183,6 +185,8 @@ Auto-filled fields (can be overridden):
 - `user_id`: User ID (default: 1)
 - `nr`: Quote number (API auto-generates)
 - Positions: Optional but recommended, same auto-fill as invoices
+
+Note: Uses flat schema structure for consistent UI experience.
 
 ### Project Management
 

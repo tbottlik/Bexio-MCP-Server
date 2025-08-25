@@ -119,7 +119,6 @@ class BexioFieldValidator:
             "create_contact": "contact_data",
             "update_contact": "contact_data",
             "update_invoice": "invoice_data",
-            "create_quote": "quote_data",
             "update_quote": "quote_data",
             "create_project": "project_data",
             "update_project": "project_data",
@@ -158,17 +157,27 @@ class BexioFieldValidator:
             return 1
             
         try:
-            taxes = await self.bexio_client.get("/tax")
+            # Use the correct Bexio API endpoint for taxes
+            taxes = await self.bexio_client._request("GET", "/2.0/taxes")
             if taxes and len(taxes) > 0:
-                # Find an active tax with percentage > 0
+                # Find the first active tax (Swiss VAT is typically id=1)
                 for tax in taxes:
-                    if tax.get("is_active", True) and tax.get("percentage", 0) > 0:
+                    if tax.get("is_active", True):
                         return tax.get("id", 1)
+                # Fallback to first tax if none marked active
                 return taxes[0].get("id", 1)
-        except Exception:
-            pass
+        except Exception as e:
+            # If tax lookup fails, try Tax ID 3 first (confirmed working), then others
+            for fallback_id in [3, 1, 2]:
+                try:
+                    # Test if this tax_id exists by trying to fetch it
+                    await self.bexio_client._request("GET", f"/2.0/taxes/{fallback_id}")
+                    return fallback_id
+                except Exception:
+                    continue
             
-        return 1
+        # Final fallback - Use Tax ID 3 (0% rate) as confirmed working in this Bexio system
+        return 3
 
     def create_helpful_error_message(self, error_message: str) -> str:
         """Create a helpful error message for any 422 error."""

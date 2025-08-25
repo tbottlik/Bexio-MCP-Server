@@ -362,34 +362,27 @@ async def list_tools() -> List[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "quote_data": {
-                        "type": "object",
-                        "description": "Quote data",
-                        "properties": {
-                            "contact_id": {"type": "integer", "description": "REQUIRED: Contact ID for the quote"},
-                            "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
-                            "nr": {"type": "string", "description": "Quote number. API auto-generates if missing."},
-                            "title": {"type": "string", "description": "Quote title"},
-                            "positions": {
-                                "type": "array",
-                                "description": "Quote line items (optional for quotes, but recommended)",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {"type": "string", "description": "REQUIRED: Position type. Auto-filled with 'KbPositionCustom' if missing."},
-                                        "text": {"type": "string", "description": "REQUIRED: Item description. Auto-filled with 'Service' if missing."},
-                                        "amount": {"type": "number", "description": "REQUIRED: Quantity. Auto-filled with 1 if missing."},
-                                        "unit_price": {"type": "number", "description": "REQUIRED: Unit price. Auto-filled with 0.0 if missing."},
-                                        "tax_id": {"type": "integer", "description": "REQUIRED: Tax ID. Auto-looked up from valid system taxes if missing."}
-                                    },
-                                    "required": ["text"]
-                                }
-                            }
-                        },
-                        "required": ["contact_id"]
+                    "contact_id": {"type": "integer", "description": "REQUIRED: Contact ID for the quote"},
+                    "user_id": {"type": "integer", "description": "REQUIRED: User ID. Auto-filled with 1 if missing."},
+                    "nr": {"type": "string", "description": "Quote number. API auto-generates if missing."},
+                    "title": {"type": "string", "description": "Quote title"},
+                    "positions": {
+                        "type": "array",
+                        "description": "Quote line items (optional for quotes, but recommended)",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "description": "REQUIRED: Position type. Auto-filled with 'KbPositionCustom' if missing."},
+                                "text": {"type": "string", "description": "REQUIRED: Item description. Auto-filled with 'Service' if missing."},
+                                "amount": {"type": "number", "description": "REQUIRED: Quantity. Auto-filled with 1 if missing."},
+                                "unit_price": {"type": "number", "description": "REQUIRED: Unit price. Auto-filled with 0.0 if missing."},
+                                "tax_id": {"type": "integer", "description": "REQUIRED: Tax ID. Auto-looked up from valid system taxes if missing."}
+                            },
+                            "required": ["text"]
+                        }
                     }
                 },
-                "required": ["quote_data"]
+                "required": ["contact_id"]
             }
         ),
         Tool(
@@ -594,8 +587,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
         
         elif name == "create_quote":
-            quote_data = arguments["quote_data"]
-            result = await client.create_quote(quote_data)
+            result = await client.create_quote(arguments)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
         
         elif name == "list_projects":
