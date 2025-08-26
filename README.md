@@ -1,6 +1,10 @@
-# Bexio MCP Server
+# Bexio MCP Server Demo
+
+![Bexio MCP Server Demo](assets/Bexio-MCP-Server-Demo.gif)
 
 MCP server for Bexio ERP integration - enables AI assistants to interact with Bexio business management software.
+
+**Available in [FlowHunt.io](https://flowhunt.io)** - Test this MCP server directly in FlowHunt's no-code AI automation platform with visual drag-and-drop workflow builder.
 
 ## Features
 
